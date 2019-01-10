@@ -1,0 +1,301 @@
+\documentclass[twoside,11pt]{article}
+\usepackage[utf8]{inputenc}
+
+\input{preamble}
+\newcommand{\tabincell}[2]{\begin{tabular}{@{}#1@{}}#2\end{tabular}}
+
+\title{RISCV PMP Extension Proposal}
+\author{Nick Kossifidis, Joe Xie, RISCV TEE WG}
+\date{January 2019}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+RISCV physical memory protection (PMP) provides a scheme to protect physical memory. M mode firmware can use PMP to isolate physcial memory between different sub-M modes. According to privilege spec 1.10 M mode access will only be checked by locked entries, while sub-M entries are usually dynamic and not locked by M mode so that the can be revoked/merged..etc, this effectively means M-mode always has access to sub-M modes memory. 
+
+Furthermore, it is impossible to create R/W entry for M mode data and X/R entry for M mode code. As spec indicates, locked entries will check both M and non-M modes, the M entries need to be locked to check M access, but meanwhile locked entries will open access to non-M modes.
+
+Allowing M mode to unintentionally execute/access anywhere leads to several security exploits including privilege escalation. Software always has bugs in real world, suppose M mode firmware has a buffer overflow bug, a malicious H or S mode can exploit the bug and trick M mode to jump/return into malicious code in H/S mode's memory space via system call thus gains M privilege. 
+
+It is a common technique that hardware architecture to provide a mechanism to prevent unintentionally access to lower privilege modes' memory from high privilege modes. Such feature can be found in many other CPU architectures and even in current RISCV spec. Intel has SMAP (Supervisor Mode Access Prevention) and SMEP (Supervisor Mode Execution Prevention) starting from Boardwell. RISCV has SUM (permit Supervisor User Memory access) bit in SSTATUS to achieve similar purpose for S mode. However lacking of such mechanism in PMP exposes M mode to the risk of privilege escalation attack from sub-M mode.
+
+This document proposes an enhancement to RISCV PMP called MMI (Machine Mode Isolation) to fix above problems.
+
+\section{Proposal}
+
+We propose to add one bit in mstatus called MMI (Machine Mode Isolation) to protect unintentional access from M mode. {\tt mstatus} layout with MMI can be found in Figure~\ref{mstatusreg-rv32-mmi} for RV32 and Figure~\ref{mstatusreg-mmi} for RV64 and RV128, it takes {\tt mstatus}.bit23, and does not present in {\tt hstatus}, {\tt sstatus} and {\tt ustatus}.
+
+\begin{figure*}[h!]
+{\footnotesize
+\begin{center}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cKcccccccc}
+\\
+\instbit{31} &
+\instbitrange{30}{24} &
+\instbit{23} &
+\instbit{22} &
+\instbit{21} &
+\instbit{20} &
+\instbit{19} &
+\instbit{18} &
+\instbit{17} &
+ \\
+\hline
+\multicolumn{1}{|c|}{SD} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{|c|}{MMI} &
+\multicolumn{1}{c|}{TSR} &
+\multicolumn{1}{c|}{TW} &
+\multicolumn{1}{c|}{TVM} &
+\multicolumn{1}{c|}{MXR} &
+\multicolumn{1}{c|}{SUM} &
+\multicolumn{1}{c|}{MPRV} &
+ \\
+\hline
+1 & 7 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & \\
+\end{tabular}
+\begin{tabular}{cccccccccccccc}
+\\
+&
+\instbitrange{16}{15} &
+\instbitrange{14}{13} &
+\instbitrange{12}{11} &
+\instbitrange{10}{9} &
+\instbit{8} &
+\instbit{7} &
+\instbit{6} &
+\instbit{5} &
+\instbit{4} &
+\instbit{3} &
+\instbit{2} &
+\instbit{1} &
+\instbit{0} \\
+\hline
+ &
+\multicolumn{1}{|c|}{XS[1:0]} &
+\multicolumn{1}{c|}{FS[1:0]} &
+\multicolumn{1}{c|}{MPP[1:0]} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SPP} &
+\multicolumn{1}{c|}{MPIE} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SPIE} &
+\multicolumn{1}{c|}{UPIE} &
+\multicolumn{1}{c|}{MIE} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SIE} &
+\multicolumn{1}{c|}{UIE} \\
+\hline
+ & 2 & 2 & 2 & 2 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\
+\end{tabular}
+\end{center}
+}
+\vspace{-0.1in}
+\caption{Machine-mode status register ({\tt mstatus}) with MMI for RV32.}
+\label{mstatusreg-rv32-mmi}
+\end{figure*}
+
+\begin{figure*}[h!]
+{\footnotesize
+\begin{center}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cRccYcccccccc}
+\\
+\instbit{MXLEN-1} &
+\instbitrange{MXLEN-3}{36} &
+\instbitrange{35}{34} &
+\instbitrange{33}{32} &
+\instbitrange{31}{24} &
+\instbit{23} &
+\instbit{22} &
+\instbit{21} &
+\instbit{20} &
+\instbit{19} &
+\instbit{18} &
+\instbit{17} &
+ \\
+\hline
+\multicolumn{1}{|c|}{SD} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SXL[1:0]} &
+\multicolumn{1}{c|}{UXL[1:0]} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{|c|}{MMI} &
+\multicolumn{1}{c|}{TSR} &
+\multicolumn{1}{c|}{TW} &
+\multicolumn{1}{c|}{TVM} &
+\multicolumn{1}{c|}{MXR} &
+\multicolumn{1}{c|}{SUM} &
+\multicolumn{1}{c|}{MPRV} &
+ \\
+\hline
+1 & MXLEN-37 & 2 & 2 & 8 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & \\
+\end{tabular}
+\begin{tabular}{cccccccccccccc}
+\\
+&
+\instbitrange{16}{15} &
+\instbitrange{14}{13} &
+\instbitrange{12}{11} &
+\instbitrange{10}{9} &
+\instbit{8} &
+\instbit{7} &
+\instbit{6} &
+\instbit{5} &
+\instbit{4} &
+\instbit{3} &
+\instbit{2} &
+\instbit{1} &
+\instbit{0} \\
+\hline
+ &
+\multicolumn{1}{|c|}{XS[1:0]} &
+\multicolumn{1}{c|}{FS[1:0]} &
+\multicolumn{1}{c|}{MPP[1:0]} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SPP} &
+\multicolumn{1}{c|}{MPIE} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SPIE} &
+\multicolumn{1}{c|}{UPIE} &
+\multicolumn{1}{c|}{MIE} &
+\multicolumn{1}{c|}{\wpri} &
+\multicolumn{1}{c|}{SIE} &
+\multicolumn{1}{c|}{UIE} \\
+\hline
+ & 2 & 2 & 2 & 2 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 \\
+\end{tabular}
+\end{center}
+}
+\vspace{-0.1in}
+\caption{Machine-mode status register ({\tt mstatus}) with MMI for RV64 and RV128.}
+\label{mstatusreg-mmi}
+\end{figure*}
+
+
+Table~\ref{mmi_meaning} explains the the meaning of MMI combining with PMP lock, MMI is reset to 0.   
+
+\begin{table*}[h!]
+\begin{center}
+  \begin{tabular}{|c|c|l|}
+  \hline
+  \tt {\tt pmpcfg}.L    & {\tt mstatus}.MMI & Meaning \\
+  \hline
+  \tt 0 & 0 & Temporary entry; enforced on sub-M modes; M-mode succeeds\\
+  \tt 0 & 1 & Temporary entry; enforced on sub-M modes; M-mode fails \\
+  \tt 1 & 0 & Locked entry; enforced on all modes \\
+  \tt 1 & 1 & Locked entry; enforced on M-mode; sub-M modes fails \\
+  \hline
+  \end{tabular}
+\end{center}
+\caption{Meaning of MMI and Lock}
+\label{mmi_meaning}
+\end{table*}
+
+\section{Explanation}
+
+Table~\ref{pmp-example} is an example PMP configuration with MMI.
+
+The first 3 entries are locked, they are allocated for M code/rodata/data. Entry 4-15 are temporary entries, they are allocated for Sub-M mode memory. 
+
+M entries are placed on top and locked in this example to guarantee that M access will be checked even if M mode is compromised. These entries are locked during secure boot before M mode starts, one can make M code entry (entry 0) is executable-only, so that an adversary cannot steal the code even M is compromised.
+
+According to Table~\ref{mmi_meaning}, sub-M mode access will fail when MMI is set and checked when MMI is clear. Here sub-M mode must never be allowed to access to M entries, we don't want sub-M mode to have access, the security relies on M mode firmware to make sure MMI is set before leaving M to sub-M modes otherwise M data might be exposed to sub-M access.
+
+Sub-M entries are not locked, according to Table~\ref{mmi_meaning} M mode access to sub-M entries will fail when MMI is set. M mode can clear MMI to gain access again. 
+
+\begin{table*}[h!]
+\begin{center}
+  \begin{tabular}{|c|c|c|c|c|l|}
+  \hline
+  \tt Index & L & X & W & R & Meaning \\
+  \hline
+  \tt 0 & 1 & 1 & 0 & 0 or 1 & \tabincell{c}{M code entry, locked, sub-M has no access} \\
+  \tt 1 & 1 & 0 & 0 & 1 & \tabincell{c}{M rodata entry, locked, sub-M has no access}\\
+  \tt 2 & 1 & 0 & 1 & 1 & \tabincell{c}{M data entry, locked, sub-M has no access}\\
+  \tt 3-15 & 0 & 0 or 1 & 0 or 1 & 0 or 1 & \tabincell{c}{Sub-M entries, not locked, M has no access by default}\\
+  \hline
+  \end{tabular}
+\end{center}
+\caption{Example PMP configuration}
+\label{pmp-example}
+\end{table*}
+
+\section{Back up}
+
+One potential problem with above proposal is that if MMI is accidentally left clear by M mode then M data will be exposed to sub-M access. This variant addresses the concern by having per-entry MMI, using reserved bit {\tt pmpcfg}.bit6. Figure~\ref{pmpcfg-mmi} shows the layout of a PMP configuration register with per entry MMI bit.
+
+\begin{figure}[h!]
+{\footnotesize
+\begin{center}
+\begin{tabular}{YYYSYYY}
+\instbit{7} &
+\instbit{6} &
+\instbit{5} &
+%\instbitrange{6}{5} &
+\instbitrange{4}{3} &
+\instbit{2} &
+\instbit{1} &
+\instbit{0} \\
+\hline
+\multicolumn{1}{|c|}{L (\warl)} &
+\multicolumn{1}{|c|}{MMI (\warl)} &
+\multicolumn{1}{c|}{0 (\warl)} &
+\multicolumn{1}{c|}{A (\warl)} &
+\multicolumn{1}{c|}{X (\warl)} &
+\multicolumn{1}{c|}{W (\warl)} &
+\multicolumn{1}{c|}{R (\warl)}
+\\
+\hline
+1 & 1 & 1 & 2 & 1 & 1 & 1 \\
+\end{tabular}
+\end{center}
+}
+\vspace{-0.1in}
+\caption{PMP configuration register format with MMI.}
+\label{pmpcfg-mmi}
+\end{figure}
+
+Table~\ref{mmi-meaning-variant} explains the the meaning of MMI and lock in this variant. Obviously per-entry MMI adds more complexity to the architecture.
+
+\begin{table*}[h!]
+\begin{center}
+  \begin{tabular}{|c|c|l|}
+  \hline
+  \tt {\tt pmpcfg}.L    & {\tt pmpcfg}.MMI & Meaning \\
+  \hline
+  \tt 0 & 0 & Temporary entry; enforced on sub-M modes; M-mode succeeds\\
+  \tt 0 & 1 & Temporary entry; enforced on sub-M modes; M-mode fails \\
+  \tt 1 & 0 & Locked entry; enforced on all modes \\
+  \tt 1 & 1 & Locked entry; enforced on M-mode; sub-M modes fails \\
+  \hline
+  \end{tabular}
+\end{center}
+\caption{Meaning of per-entry MMI and Lock}
+\label{mmi-meaning-variant}
+\end{table*}
+
+Table~\ref{pmp-example-variant} explains example PMP setting using per-entry MMI, MMI bit for M entries are all set and locked so that there's no way software can mess up MMI and expose M data to sub-M modes.
+
+\begin{table*}[h!]
+\begin{center}
+  \begin{tabular}{|c|c|c|c|c|c|c|l|}
+  \hline
+  \tt Index & L & MMI & X & W & R & Meaning \\
+  \hline
+  \tt 0 & 1 & 1 & 1 & 0 & 1 & \tabincell{c}{M code entry, locked, sub-M has no access} \\
+  \tt 1 & 1 & 1 & 0 & 0 & 1 & \tabincell{c}{M rodata entry, locked, sub-M has no access}\\
+  \tt 2 & 1 & 1 & 0 & 1 & 1 & \tabincell{c}{M data entry, locked, sub-M has no access}\\
+  \tt 3-15 & 0 & 0/1 & 0/1 & 0/1 & 0/1 & \tabincell{c}{Sub-M entries, not locked, M has no access by default}\\
+  \hline
+  \end{tabular}
+\end{center}
+\caption{Example PMP configuration with per-entry MMI}
+\label{pmp-example-variant}
+\end{table*} 
+
+\end{document}
